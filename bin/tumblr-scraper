@@ -1,0 +1,127 @@
+#!/usr/bin/python
+
+import sys
+import os
+import json
+import urlparse
+import requests
+
+
+def uprint(msg, newline=True, quiet=False):
+    """
+    Unbuffered print.
+    """
+    if not quiet:
+        sys.stdout.write("%s%s" % (msg, "\n" if newline else ''))
+        sys.stdout.flush()
+
+def get_blog_url(name):
+    return "http://{name}.tumblr.com/api/read/json".format(name=name)
+
+def get_page(url, start=0, num=50):
+    args = {}
+    args['start'] = start
+    args['num'] = num
+
+    # Fetch the page
+    r = requests.get(url, params=args)
+    uprint("Fetched %s" % (r.url,))
+
+    # Strip off the jsonp garbage
+    text = r.text.strip()[22:-1]
+
+    # Return the result as a dict
+    return json.loads(text)
+
+def save_photo(url, out, filename):
+    r = requests.get(url)
+
+    # ...
+    path = os.path.join(out, filename)
+
+    # ...
+    if r.status_code == 200:
+        with open(path, 'wb') as f:
+            for chunk in r.iter_content(1024):
+                f.write(chunk)
+    uprint("Saved to %s" % (path,))
+
+def main():
+    global quiet
+    quiet = False
+
+    if len(sys.argv) != 3:
+        uprint("Missing [site_name] and [out] path!")
+        return
+
+    # TODO: Better errors and support, --help
+    blog_name = sys.argv[1]
+    out = sys.argv[2]
+
+    uprint("DEBUG: "+blog_name)
+    uprint("DEBUG: "+out)
+    uprint("DEBUG: "+get_blog_url(blog_name))
+
+    # Get the blog URL
+    uprint("Scraping %s..." % (blog_name))
+    blog_url = get_blog_url(blog_name)
+
+    # Get the total post count
+    body = get_page(blog_url, 0, 0)
+    total_count = body['posts-total']
+    uprint("Total posts: %s" % (total_count,))
+
+    # Build list of photos
+    photo_urls = []
+
+    start = 0
+    per_page = 50
+    while start < total_count:
+        body = get_page(blog_url, start)
+
+        for post in body['posts']:
+            post_type = post['type']
+            post_slug = post['slug']
+
+            # ...
+            if 'photo-url-1280' in post:
+                post_photo_url = post['photo-url-1280']
+                photo_urls.append(post_photo_url)
+
+            # ...
+            if post_type == 'photo':
+                post_photos = post['photos']
+
+                # ...
+                for photo in post['photos']:
+                    url = photo['photo-url-1280']
+                    photo_urls.append(url)
+                    # TODO: quiet...
+                    uprint(url)
+            else:
+                continue
+
+        # ...
+        start += per_page
+
+    # ...
+    # TODO: Deduplicate photos
+    # TODO: Multiprocess for faster scraping
+    uprint("Found %s photos!" % (len(photo_urls),))
+    for url in photo_urls:
+        uprint("Fetching %s..." % (url,))
+
+        # Get the URL path
+        url_path = urlparse.urlsplit(url).path
+
+        # Get the filename from the path
+        filename = os.path.basename(url_path)
+
+        # Save the photo to disk
+        save_photo(url, out, filename)
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit()
