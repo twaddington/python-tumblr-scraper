@@ -6,7 +6,7 @@ try:
 except ImportError:
     from distutils.core import setup
 
-import rdio_export
+import tumblr_scraper
 
 requires = [
     'requests',
@@ -14,7 +14,7 @@ requires = [
 
 setup(
     name='python-tumblr-scraper',
-    version=rdio_export.__version__,
+    version=tumblr_scraper.__version__,
     description='A command-line utility for scraper a Tumblr site.',
     long_description=open('README.rst').read(),
     keywords='tumblr',
@@ -23,7 +23,7 @@ setup(
     author_email='tristan.waddington@gmail.com',
     url='https://github.com/twaddington/python-tumblr-scraper',
     install_requires=requires,
-    #packages=['rdio_export'],
+    packages=['tumblr_scraper'],
     scripts=['bin/tumblr-scraper'],
     zip_safe=False,
     classifiers=[

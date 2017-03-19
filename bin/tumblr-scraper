@@ -2,12 +2,14 @@
 
 import sys
 import os
-import json
+import argparse
 import urlparse
+import json
 import requests
 
+from tumblr_scraper import __version__
 
-def uprint(msg, newline=True, quiet=False):
+def uprint(msg, newline=True):
     """
     Unbuffered print.
     """
@@ -18,7 +20,7 @@ def uprint(msg, newline=True, quiet=False):
 def get_blog_url(name):
     return "http://{name}.tumblr.com/api/read/json".format(name=name)
 
-def get_page(url, start=0, num=50):
+def get_json_page(url, start=0, num=50):
     args = {}
     args['start'] = start
     args['num'] = num
@@ -33,92 +35,115 @@ def get_page(url, start=0, num=50):
     # Return the result as a dict
     return json.loads(text)
 
-def save_photo(url, out, filename):
-    r = requests.get(url)
+def save_photo(s, url, out_dir):
+    # Get the URL path
+    url_path = urlparse.urlsplit(url).path
 
-    # ...
-    path = os.path.join(out, filename)
+    # Get the filename from the URL path
+    filename = os.path.basename(url_path)
 
-    # ...
-    if r.status_code == 200:
-        with open(path, 'wb') as f:
-            for chunk in r.iter_content(1024):
-                f.write(chunk)
-    uprint("Saved to %s" % (path,))
+    # Set our local out file
+    photo_out = os.path.join(out_dir, filename)
+
+    # Bail if this file already exists
+    if os.path.isfile(photo_out):
+        return
+    else:
+        resp = s.get(url, stream=True)
+        if resp.ok:
+            with open(photo_out, 'wb') as fd:
+                for chunk in resp.iter_content(chunk_size=1024):
+                    fd.write(chunk)
+
+def save_post(json):
+    s = requests.Session()
+
+    # Find and create the out directory for this post
+    out_dir = os.path.join(out, json['slug'])
+    try:
+        os.mkdir(out_dir)
+    except OSError:
+        pass
+
+    # INFO
+    uprint(out_dir)
+
+    # Grab the post photo
+    if 'photo-url-1280' in json:
+        photo_url = json['photo-url-1280']
+
+        # INFO
+        uprint('    ' + photo_url)
+        save_photo(s, photo_url, out_dir)
+
+    # Grab all the photos
+    if json['type'] == 'photo':
+        for photo in json['photos']:
+            photo_url = photo['photo-url-1280']
+
+            # INFO
+            uprint('    ' + photo_url)
+            save_photo(s, photo_url, out_dir)
 
 def main():
+    # Create our parser
+    global parser
+    parser = argparse.ArgumentParser(prog='tumblr-scraper',
+            description='Archives a Tumblr blog to a local directory')
+
+    # Set up our command-line arguments
+    parser.add_argument('blog_name')
+    parser.add_argument('-o', '--out', default=os.getcwd(),
+            help='set the out directory for the archive')
+    parser.add_argument('--quiet', action='store_true',
+            help='suppress all output except errors')
+    parser.add_argument('--version', action='version',
+            version='%(prog)s {v}'.format(v=__version__))
+
+    # Get our arguments
+    args = parser.parse_args()
+
+    # Set our globals
     global quiet
-    quiet = False
+    quiet = args.quiet
 
-    if len(sys.argv) != 3:
-        uprint("Missing [site_name] and [out] path!")
-        return
+    global out
+    out = os.path.expanduser(args.out)
 
-    # TODO: Better errors and support, --help
-    blog_name = sys.argv[1]
-    out = sys.argv[2]
+    if not os.path.exists(out):
+        parser.error('The out dir does not exist!')
+    if not os.path.isdir(out):
+        parser.error('The out dir is not a directory!')
+    if not os.access(out, os.W_OK):
+        parser.error('The out dir is not writable!')
+    if not os.access(out, os.X_OK):
+        parser.error('The out dir is not executable!')
 
-    uprint("DEBUG: "+blog_name)
-    uprint("DEBUG: "+out)
-    uprint("DEBUG: "+get_blog_url(blog_name))
-
-    # Get the blog URL
-    uprint("Scraping %s..." % (blog_name))
+    # Get our args
+    blog_name = args.blog_name
     blog_url = get_blog_url(blog_name)
 
+    # INFO
+    uprint('Archiving \'%s\' to %s' % (blog_name, out,))
+
     # Get the total post count
-    body = get_page(blog_url, 0, 0)
-    total_count = body['posts-total']
+    json = get_json_page(blog_url, 0, 0)
+    total_count = json['posts-total']
     uprint("Total posts: %s" % (total_count,))
 
-    # Build list of photos
-    photo_urls = []
-
+    # This is the main loop. We'll loop over each page of post
+    # results until we've archived the entire blog.
     start = 0
     per_page = 50
     while start < total_count:
-        body = get_page(blog_url, start)
+        json = get_json_page(blog_url, start)
 
-        for post in body['posts']:
-            post_type = post['type']
-            post_slug = post['slug']
+        # Loop over each post in this batch
+        for post in json['posts']:
+            save_post(post)
 
-            # ...
-            if 'photo-url-1280' in post:
-                post_photo_url = post['photo-url-1280']
-                photo_urls.append(post_photo_url)
-
-            # ...
-            if post_type == 'photo':
-                post_photos = post['photos']
-
-                # ...
-                for photo in post['photos']:
-                    url = photo['photo-url-1280']
-                    photo_urls.append(url)
-                    # TODO: quiet...
-                    uprint(url)
-            else:
-                continue
-
-        # ...
+        # Increment and grab the next batch of posts
         start += per_page
-
-    # ...
-    # TODO: Deduplicate photos
-    # TODO: Multiprocess for faster scraping
-    uprint("Found %s photos!" % (len(photo_urls),))
-    for url in photo_urls:
-        uprint("Fetching %s..." % (url,))
-
-        # Get the URL path
-        url_path = urlparse.urlsplit(url).path
-
-        # Get the filename from the path
-        filename = os.path.basename(url_path)
-
-        # Save the photo to disk
-        save_photo(url, out, filename)
 
 if __name__ == '__main__':
     try:
