@@ -2,6 +2,7 @@
 
 import sys
 import os
+import time
 import argparse
 import urlparse
 import json
@@ -27,9 +28,8 @@ def get_json_page(url, start=0, num=50):
 
     # Fetch the page
     r = requests.get(url, params=args)
-    uprint("Fetched %s" % (r.url,))
 
-    # Strip off the jsonp garbage
+    # Strip the jsonp garbage
     text = r.text.strip()[22:-1]
 
     # Return the result as a dict
@@ -45,6 +45,12 @@ def save_photo(s, url, out_dir):
     # Set our local out file
     photo_out = os.path.join(out_dir, filename)
 
+    # Ensure the out directory exists
+    try:
+        os.makedirs(out_dir)
+    except OSError:
+        pass
+
     # Bail if this file already exists
     if os.path.isfile(photo_out):
         return
@@ -56,17 +62,19 @@ def save_photo(s, url, out_dir):
                     fd.write(chunk)
 
 def save_post(json):
-    s = requests.Session()
+    # Get the GMT date components for this post
+    year = json['date-gmt'][:4]
+    month = json['date-gmt'][5:7]
+    day = json['date-gmt'][8:10]
 
-    # Find and create the out directory for this post
-    out_dir = os.path.join(out, json['slug'])
-    try:
-        os.mkdir(out_dir)
-    except OSError:
-        pass
+    # Find the out directory for this post
+    out_dir = os.path.join(out, year, month, day, json['slug'])
 
     # INFO
     uprint(out_dir)
+
+    # Create our HTTP session
+    s = requests.Session()
 
     # Grab the post photo
     if 'photo-url-1280' in json:
@@ -129,7 +137,12 @@ def main():
     # Get the total post count
     json = get_json_page(blog_url, 0, 0)
     total_count = json['posts-total']
-    uprint("Total posts: %s" % (total_count,))
+
+    # INFO
+    uprint('Total posts: %s' % (total_count,))
+
+    # Start our elapsed timer
+    start_time = time.time()
 
     # This is the main loop. We'll loop over each page of post
     # results until we've archived the entire blog.
@@ -144,6 +157,11 @@ def main():
 
         # Increment and grab the next batch of posts
         start += per_page
+
+    # INFO
+    minutes, seconds = divmod(time.time() - start_time, 60)
+    uprint('Archived {count} posts in {m:02d}m and {s:02d}s'.format(\
+            count=total_count, m=int(round(minutes)), s=int(round(seconds))))
 
 if __name__ == '__main__':
     try:
